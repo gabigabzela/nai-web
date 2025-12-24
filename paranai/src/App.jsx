@@ -95,17 +95,17 @@ function App() {
       const imageUrl = URL.createObjectURL(file)
       setPendingPhoto({
         imageUrl: imageUrl,
-        fileName: file.name.split('.')[0]
+        fileName: file.name.split('.')[0],
+        file: file
       })
     }
   }
 
   const handleAddPhoto = async (photoData) => {
-    if (pendingPhoto) {
+    if (pendingPhoto && pendingPhoto.file) {
       try {
         // Convertir la imagen a base64 para guardarla como Data URL
         const reader = new FileReader()
-        const file = document.getElementById('photo-upload').files[0]
         
         reader.onload = async (e) => {
           const base64String = e.target.result
@@ -131,7 +131,7 @@ function App() {
           }
         }
 
-        reader.readAsDataURL(file)
+        reader.readAsDataURL(pendingPhoto.file)
       } catch (error) {
         console.error('Error:', error)
         alert('Error al subir la foto')
