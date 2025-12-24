@@ -3,48 +3,78 @@ import PhotoCard from './components/PhotoCard'
 import PhotoForm from './components/PhotoForm'
 import HeroSection from './components/HeroSection'
 import { useState, useEffect } from 'react'
-import { supabase } from './supabaseClient'
+
+let supabase = null
+try {
+  const sbImport = import('./supabaseClient')
+  supabase = sbImport.then(m => m.supabase)
+} catch (error) {
+  console.error('Failed to import supabase:', error)
+}
 
 function App() {
   const [selectedPhoto, setSelectedPhoto] = useState(null)
   const [userPhotos, setUserPhotos] = useState([])
   const [pendingPhoto, setPendingPhoto] = useState(null)
+  const [sb, setSb] = useState(null)
+
+  // Inicializar Supabase
+  useEffect(() => {
+    import('./supabaseClient')
+      .then(module => {
+        setSb(module.supabase)
+      })
+      .catch(error => {
+        console.error('Error initializing supabase:', error)
+      })
+  }, [])
 
   // Cargar fotos desde Supabase y escuchar cambios en tiempo real
   useEffect(() => {
+    if (!sb) return
+    
     fetchPhotos()
 
     // Escuchar cambios en tiempo real
-    const channel = supabase
-      .channel('photos')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'photos' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setUserPhotos(prev => [payload.new, ...prev])
-          } else if (payload.eventType === 'DELETE') {
-            setUserPhotos(prev => prev.filter(p => p.id !== payload.old.id))
+    try {
+      const channel = sb
+        .channel('photos')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'photos' },
+          (payload) => {
+            if (payload.eventType === 'INSERT') {
+              setUserPhotos(prev => [payload.new, ...prev])
+            } else if (payload.eventType === 'DELETE') {
+              setUserPhotos(prev => prev.filter(p => p.id !== payload.old.id))
+            }
           }
-        }
-      )
-      .subscribe()
+        )
+        .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
+      return () => {
+        sb.removeChannel(channel)
+      }
+    } catch (error) {
+      console.error('Error setting up realtime:', error)
     }
-  }, [])
+  }, [sb])
 
   const fetchPhotos = async () => {
-    const { data, error } = await supabase
-      .from('photos')
-      .select('*')
-      .order('created_at', { ascending: false })
+    if (!sb) return
+    try {
+      const { data, error } = await sb
+        .from('photos')
+        .select('*')
+        .order('created_at', { ascending: false })
 
-    if (error) {
-      console.error('Error fetching photos:', error)
-    } else {
-      setUserPhotos(data || [])
+      if (error) {
+        console.error('Error fetching photos:', error)
+      } else {
+        setUserPhotos(data || [])
+      }
+    } catch (error) {
+      console.error('Exception fetching photos:', error)
     }
   }
 
@@ -102,7 +132,7 @@ function App() {
   }
 
   const handleAddPhoto = async (photoData) => {
-    if (pendingPhoto && pendingPhoto.file) {
+    if (pendingPhoto && pendingPhoto.file && sb) {
       try {
         // Convertir la imagen a base64 para guardarla como Data URL
         const reader = new FileReader()
@@ -111,7 +141,7 @@ function App() {
           const base64String = e.target.result
 
           // Guardar en Supabase
-          const { data, error } = await supabase
+          const { data, error } = await sb
             .from('photos')
             .insert([
               {
