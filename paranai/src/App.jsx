@@ -3,19 +3,50 @@ import PhotoCard from './components/PhotoCard'
 import PhotoForm from './components/PhotoForm'
 import HeroSection from './components/HeroSection'
 import { useState, useEffect } from 'react'
+import { supabase } from './supabaseClient'
 
 function App() {
   const [selectedPhoto, setSelectedPhoto] = useState(null)
   const [userPhotos, setUserPhotos] = useState([])
   const [pendingPhoto, setPendingPhoto] = useState(null)
 
-  // Cargar fotos desde localStorage al iniciar
+  // Cargar fotos desde Supabase y escuchar cambios en tiempo real
   useEffect(() => {
-    const savedPhotos = localStorage.getItem('userPhotos')
-    if (savedPhotos) {
-      setUserPhotos(JSON.parse(savedPhotos))
+    fetchPhotos()
+
+    // Escuchar cambios en tiempo real
+    const channel = supabase
+      .channel('photos')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'photos' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setUserPhotos(prev => [payload.new, ...prev])
+          } else if (payload.eventType === 'DELETE') {
+            setUserPhotos(prev => prev.filter(p => p.id !== payload.old.id))
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
     }
   }, [])
+
+  const fetchPhotos = async () => {
+    const { data, error } = await supabase
+      .from('photos')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Error fetching photos:', error)
+    } else {
+      setUserPhotos(data || [])
+    }
+  }
 
   const photos = [
     { 
@@ -69,24 +100,42 @@ function App() {
     }
   }
 
-  const handleAddPhoto = (photoData) => {
+  const handleAddPhoto = async (photoData) => {
     if (pendingPhoto) {
-      const newPhoto = {
-        id: Date.now() + Math.random(),
-        imageUrl: pendingPhoto.imageUrl,
-        title: photoData.title,
-        caption: photoData.caption,
-        isUserPhoto: true
+      try {
+        // Convertir la imagen a base64 para guardarla como Data URL
+        const reader = new FileReader()
+        const file = document.getElementById('photo-upload').files[0]
+        
+        reader.onload = async (e) => {
+          const base64String = e.target.result
+
+          // Guardar en Supabase
+          const { data, error } = await supabase
+            .from('photos')
+            .insert([
+              {
+                title: photoData.title,
+                caption: photoData.caption,
+                image_url: base64String
+              }
+            ])
+            .select()
+
+          if (error) {
+            console.error('Error uploading photo:', error)
+            alert('Error al subir la foto')
+          } else {
+            setPendingPhoto(null)
+            document.getElementById('photo-upload').value = ''
+          }
+        }
+
+        reader.readAsDataURL(file)
+      } catch (error) {
+        console.error('Error:', error)
+        alert('Error al subir la foto')
       }
-      
-      const updatedPhotos = [newPhoto, ...userPhotos]
-      setUserPhotos(updatedPhotos)
-      
-      // Guardar en localStorage
-      localStorage.setItem('userPhotos', JSON.stringify(updatedPhotos))
-      
-      setPendingPhoto(null)
-      document.getElementById('photo-upload').value = ''
     }
   }
 
@@ -126,7 +175,7 @@ function App() {
                 id={photo.id}
                 title={photo.title}
                 caption={photo.caption}
-                imageUrl={photo.imageUrl}
+                imageUrl={photo.image_url || photo.imageUrl}
                 onClick={() => openModal(photo)}
               />
             ))}
@@ -165,7 +214,7 @@ function App() {
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <button className="modal-close" onClick={closeModal}>✕</button>
             <img 
-              src={selectedPhoto.isUserPhoto ? selectedPhoto.imageUrl : `https://placekitten.com/${selectedPhoto.id}/600`}
+              src={selectedPhoto.image_url || selectedPhoto.imageUrl || `https://placekitten.com/${selectedPhoto.id}/600`}
               alt={selectedPhoto.title}
               className="modal-image"
             />
